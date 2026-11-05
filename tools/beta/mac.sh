@@ -431,11 +431,20 @@ if [ "$OS" = mac ]; then
     *) this_target=x86_64-apple-darwin; other_target=aarch64-apple-darwin ;;
   esac
   rustup target add "$this_target" "$other_target" >> "$LOG" 2>&1
+  # The macOS 27 linker can leave either slice's string table 4 bytes off an 8-byte
+  # boundary, and dyld then refuses the plugin: pad it, on an unsigned copy.
+  align_slice() {
+    cp "$CARGO_TARGET_DIR/$1/release/$LIB" "$WORK/$1.dylib" &&
+      codesign --remove-signature "$WORK/$1.dylib" &&
+      python3 -I "$SRC/tools/beta/align_strtab.py" "$WORK/$1.dylib"
+  }
   run "the plugin did not compile" build_plugin --target "$this_target"
-  BUILT_PLUGIN="$CARGO_TARGET_DIR/$this_target/release/$LIB"
+  run "the plugin could not be prepared for loading" align_slice "$this_target"
+  BUILT_PLUGIN="$WORK/$this_target.dylib"
   say "      Compiling the second half, so X-Plane loads it with or without Rosetta..."
   if build_plugin --target "$other_target" >> "$LOG" 2>&1; then
-    run "the two halves of the plugin did not join" lipo -create "$BUILT_PLUGIN" "$CARGO_TARGET_DIR/$other_target/release/$LIB" -output "$WORK/mac.xpl"
+    run "the second half could not be prepared for loading" align_slice "$other_target"
+    run "the two halves of the plugin did not join" lipo -create "$BUILT_PLUGIN" "$WORK/$other_target.dylib" -output "$WORK/mac.xpl"
     BUILT_PLUGIN="$WORK/mac.xpl"
   else
     say "      WARNING: the second half did not compile. X-Plane under Rosetta will not load this plugin."

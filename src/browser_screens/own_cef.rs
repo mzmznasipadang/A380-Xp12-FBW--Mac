@@ -500,6 +500,11 @@ fn lib() -> Option<Lib> {
     }
 }
 
+/// Whether X-Plane has its CEF loaded at all.
+pub fn loaded() -> bool {
+    cef_symbol(c"cef_api_hash").is_some()
+}
+
 /// Whether CEF is up and this is its UI thread (`cef_currently_on(TID_UI)`): false,
 /// with no harm, before X-Plane has initialized it.
 #[cfg(target_os = "macos")]

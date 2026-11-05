@@ -919,7 +919,11 @@ impl Renderer {
             let gl = &self.gl;
             let scissor_was_on = (gl.is_enabled)(GL_SCISSOR_TEST) != 0;
             (gl.use_program)(0);
-            (gl.bind_vertex_array)(0);
+            // macOS gives plugins a legacy 2.1 context (X-Plane draws with Metal), where the
+            // core glBindVertexArray only raises GL_INVALID_OPERATION and there is no VAO to undo.
+            if !cfg!(target_os = "macos") {
+                (gl.bind_vertex_array)(0);
+            }
             self.upload(gpu, stream, mesh, res, natives);
             let gl = &self.gl;
             (self.xp.set_graphics_state)(0, 0, 0, 0, 1, 0, 0);
@@ -1471,7 +1475,11 @@ impl Renderer {
             let gl = &self.gl;
             let scissor_was_on = (gl.is_enabled)(GL_SCISSOR_TEST) != 0;
             (gl.use_program)(0);
-            (gl.bind_vertex_array)(0);
+            // macOS gives plugins a legacy 2.1 context (X-Plane draws with Metal), where the
+            // core glBindVertexArray only raises GL_INVALID_OPERATION and there is no VAO to undo.
+            if !cfg!(target_os = "macos") {
+                (gl.bind_vertex_array)(0);
+            }
             (gl.bind_framebuffer)(GL_FRAMEBUFFER, target.framebuffer);
             let [vx, vy, vw, vh] = target.viewport;
             (gl.viewport)(vx, vy, vw, vh);

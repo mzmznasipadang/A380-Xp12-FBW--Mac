@@ -113,8 +113,12 @@ pub fn enabled() -> bool {
         #[cfg(any(windows, target_os = "macos"))]
         if wanted && own_route() {
             if let Err(e) = xp::system_path().ok_or_else(|| "no X-Plane folder".to_string()).and_then(|root| own_cef::available(&root)) {
-                log(&format!("using the app: {e}"));
-                return false;
+                // macOS: X-Plane may load its Chromium after this plugin starts; `chromium_up` checks again.
+                let later = cfg!(target_os = "macos") && !own_cef::loaded();
+                log(&format!("{}: {e}", if later { "checking again once the screens start" } else { "using the app" }));
+                if !later {
+                    return false;
+                }
             }
         }
         if wanted {
@@ -518,12 +522,14 @@ fn chromium_up(s: &mut State) -> bool {
         return false;
     }
     s.cef_checked_at = Some(Instant::now());
-    if own_cef::on_ui_thread() {
+    // The framework may have loaded since `enabled()` looked (macOS ignores the folder).
+    let ready = own_cef::available(std::path::Path::new("")).and_then(|_| if own_cef::on_ui_thread() { Ok(()) } else { Err("cef_currently_on(UI) is false".to_string()) });
+    if ready.is_ok() {
         crate::log(&format!("browser screens: X-Plane's Chromium is up and this is its UI thread (after {} checks)", s.cef_waits + 1));
         return true;
     }
     if s.cef_waits % 30 == 0 {
-        crate::log(&format!("browser screens: X-Plane's Chromium is not up on this thread (cef_currently_on(UI) false, {} s); the screens stay dark until it is", s.cef_waits));
+        crate::log(&format!("browser screens: X-Plane's Chromium is not ready on this thread ({}, {} s); the screens stay dark until it is", ready.unwrap_err(), s.cef_waits));
     }
     s.cef_waits += 1;
     false

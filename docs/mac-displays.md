@@ -40,8 +40,8 @@ Red herrings ruled out: the `GL_INVALID_OPERATION` lines after the atlas/VBO
 uploads come from `glBindVertexArray(0)` (core name) in the legacy 2.1 context
 X-Plane gives plugins on a Mac. A standalone replay of the renderer's calls on
 the same driver ("2.1 Metal - 91.7") showed that is the only failing call, and
-the GL_ALPHA8 atlas, VBO, 4x MSAA framebuffer and blit all work. Harmless, but
-`gl.bind_vertex_array` could be skipped on a legacy context to quiet the log.
+the GL_ALPHA8 atlas, VBO, 4x MSAA framebuffer and blit all work. Harmless; the call
+is now skipped on macOS (`display/gl.rs`) to quiet the log.
 
 ## Porting options (cheapest first)
 
@@ -124,9 +124,10 @@ from this worktree over it, leave `FBW_BROWSER_ROUTE` unset
 `Log.txt`. What to look for, in order:
 
 1. `browser screens: using the app: ...`: the framework is not loaded, or
-   the hash differs. `enabled()` decides once, when the plugin starts, so
-   "not loaded" may also mean X-Plane loads CEF later than our plugin. Then
-   move the `available()` check into `chromium_up`.
+   the hash differs. On macOS a framework that is not loaded yet when the plugin
+   starts no longer turns the route off: `enabled()` logs "checking again once
+   the screens start" and `chromium_up` repeats the load-and-hash check once a
+   second, logging the reason every 30 s.
 2. `X-Plane's Chromium is not up on this thread ...` repeating: CEF never
    came up, or plugins do not run on its UI thread.
 3. `X-Plane's Chromium is up and this is its UI thread`, then
@@ -157,9 +158,8 @@ Left to do:
 - Only the arm64 slice could be dlopen-tested here (no Rosetta on this Mac).
   The universal `target/mac-own-cef/mac.xpl` loads with `dlopen(RTLD_NOW)`.
   `nm -u` shows no `cef_*` or Windows symbols in either slice.
-- `mac.sh` still needs the string-pool alignment step (below). Check both
-  slices: in this build the arm64 string pool happened to be aligned and the
-  x86_64 one was 4 bytes off.
+- `mac.sh` now pads both slices (`tools/beta/align_strtab.py`). In this build the
+  arm64 string pool happened to be aligned and the x86_64 one was 4 bytes off.
 - Windows was not `cargo check`ed: only the two darwin targets are installed in
   the toolchain used here. The Windows code paths were moved behind `cfg`, not
   changed, apart from `cef_symbol()` replacing the inline
@@ -190,11 +190,13 @@ work here, but nothing is shown until it ships.
    X-Plane folder", "the FMS's flight plans could not be read", and
    `xphfbw.json` (e.g. `displaySafeMode`) never read. `use_native_paths()` now
    runs first.
-2. **Misaligned Mach-O string table** (not fixed in the build): the arm64
+2. **Misaligned Mach-O string table** (fixed in `mac.sh`): the arm64
    slice `cargo` produces with the macOS 27 toolchain (ld-27106.1) has
    `LC_SYMTAB.stroff` 4 bytes off an 8-byte boundary (0x014AF8C4), and
    dyld refuses it ("mis-aligned LINKEDIT string pool"). `strip -x` keeps the
    misalignment. Worked around after linking by inserting 4 zero bytes before
    the string pool, bumping `stroff` and `__LINKEDIT.filesize`, then `lipo` and
-   an ad-hoc `codesign`. `mac.sh` should do this (or find the linker flag that
-   avoids it) or every Mac install produces a plugin X-Plane cannot load.
+   an ad-hoc `codesign`. `mac.sh` now does this to each slice, on an unsigned copy,
+   with `tools/beta/align_strtab.py` (a no-op on an aligned slice). Either slice
+   can come out misaligned. A linker flag that avoids it would be cleaner; none
+   was found yet.
