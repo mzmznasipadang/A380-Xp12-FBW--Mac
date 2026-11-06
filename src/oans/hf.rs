@@ -15,8 +15,8 @@ const SPHERE_RADIUS_M: f64 = 6_371_008.8;
 const RECEIVE_MS: u32 = 90_000;
 const RETRY_AFTER: Duration = Duration::from_secs(600);
 const INDEX_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
-pub const ATTRIBUTION: &str = "Airport map data \u{a9} OpenStreetMap contributors, available under the Open Database License (ODbL), \
-from the Free Airport Mapping DB (huggingface.co/datasets/Royale2072/free-airport-mapping-db).";
+pub const ATTRIBUTION: &str = "Airport map data from the Free Airport Mapping DB (huggingface.co/datasets/Royale2072/free-airport-mapping-db): \
+X-Plane Scenery Gateway data under the GPL 2.0, and \u{a9} OpenStreetMap contributors under the Open Database License (ODbL).";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fetch {
@@ -37,9 +37,11 @@ fn icao_code(icao: &str) -> Option<String> {
     (code.len() == 4 && code.chars().all(|c| c.is_ascii_alphanumeric())).then_some(code)
 }
 
-pub fn airport_url(icao: &str) -> Option<String> {
+/// Format 2 of the dataset: the Scenery Gateway file, then the OpenStreetMap
+/// one, which beside a Gateway file only carries the layers the Gateway lacks.
+pub fn airport_urls(icao: &str) -> Option<[String; 2]> {
     let code = icao_code(icao)?;
-    Some(format!("{DATASET}/v1/{}/{code}.json", &code[..2]))
+    Some(["gateway", "osm"].map(|source| format!("{DATASET}/{source}/v1/{}/{code}.json", &code[..2])))
 }
 
 fn index_path(root: &Path, query: &str) -> (PathBuf, String) {
@@ -57,7 +59,8 @@ fn fresh(path: &Path, max_age: Option<Duration>) -> bool {
     }
 }
 
-fn download(target: PathBuf, url: String, convert: fn(&str) -> Option<String>, max_age: Option<Duration>) -> Fetch {
+/// Fetches every url; a 404 is an absent file (`None`), any other failure fails the lot.
+fn download(target: PathBuf, urls: Vec<String>, convert: fn(&[Option<String>]) -> Option<String>, max_age: Option<Duration>) -> Fetch {
     if fresh(&target, max_age) {
         return Fetch::Ready;
     }
@@ -73,10 +76,15 @@ fn download(target: PathBuf, url: String, convert: fn(&str) -> Option<String>, m
     map.insert(target.clone(), State::InFlight);
     let key = target.clone();
     let spawned = std::thread::Builder::new().name("fbw-amdb-hf".into()).spawn(move || {
-        let ok = crate::net::request_with("GET", &url, "", RECEIVE_MS)
-            .filter(|(status, _)| *status == 200)
-            .and_then(|(_, body)| convert(&body))
-            .is_some_and(|text| write(&key, &text));
+        let bodies: Option<Vec<Option<String>>> = urls
+            .iter()
+            .map(|url| match crate::net::request_with("GET", url, "", RECEIVE_MS)? {
+                (200, body) => Some(Some(body)),
+                (404, _) => Some(None),
+                _ => None,
+            })
+            .collect();
+        let ok = bodies.and_then(|b| convert(&b)).is_some_and(|text| write(&key, &text));
         let mut guard = DOWNLOADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(map) = guard.as_mut() {
             if ok {
@@ -105,13 +113,37 @@ fn write(path: &Path, text: &str) -> bool {
 }
 
 pub fn airport(root: &Path, icao: &str) -> Fetch {
-    let (Some(code), Some(url)) = (icao_code(icao), airport_url(icao)) else { return Fetch::Missing };
-    download(root.join(format!("{code}.json")), url, |body| to_local(&serde_json::from_str(body).ok()?).map(|v| v.to_string()), None)
+    let (Some(code), Some(urls)) = (icao_code(icao), airport_urls(icao)) else { return Fetch::Missing };
+    download(root.join(format!("{code}.json")), urls.into(), |bodies| merged(bodies).map(|v| v.to_string()), None)
+}
+
+/// Each file is projected about its own ARP, so they are merged once in lat/lon;
+/// a later file only fills layers the earlier ones lack or leave empty.
+fn merged(bodies: &[Option<String>]) -> Option<Value> {
+    let mut out: Option<Map<String, Value>> = None;
+    for body in bodies.iter().flatten() {
+        let Some(Value::Object(layers)) = serde_json::from_str(body).ok().as_ref().and_then(to_local) else { continue };
+        let Some(out) = out.as_mut() else {
+            out = Some(layers);
+            continue;
+        };
+        for (name, collection) in layers {
+            let empty = out.get(&name).and_then(|c| c.get("features")).and_then(Value::as_array).is_none_or(Vec::is_empty);
+            if empty {
+                out.insert(name, collection);
+            }
+        }
+    }
+    out.map(Value::Object)
 }
 
 pub fn search_index(root: &Path, query: &str) -> Option<Vec<Value>> {
     let (path, url) = index_path(root, query);
-    match download(path.clone(), url, |body| serde_json::from_str::<Vec<Value>>(body).ok().map(|_| body.to_string()), Some(INDEX_MAX_AGE)) {
+    let index = |bodies: &[Option<String>]| {
+        let body = bodies.first()?.as_ref()?;
+        serde_json::from_str::<Vec<Value>>(body).ok().map(|_| body.clone())
+    };
+    match download(path.clone(), vec![url], index, Some(INDEX_MAX_AGE)) {
         Fetch::Pending => None,
         Fetch::Ready | Fetch::Missing => Some(
             std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Vec<Value>>(&t).ok()).unwrap_or_default(),
@@ -228,12 +260,28 @@ mod tests {
 
     #[test]
     fn files_are_named_as_the_dataset_lays_them_out() {
-        assert_eq!(airport_url("egll").unwrap(), format!("{DATASET}/v1/EG/EGLL.json"));
-        assert!(airport_url("EGL").is_none());
-        assert!(airport_url("EG/L").is_none());
+        assert_eq!(airport_urls("egll").unwrap(), [format!("{DATASET}/gateway/v1/EG/EGLL.json"), format!("{DATASET}/osm/v1/EG/EGLL.json")]);
+        assert!(airport_urls("EGL").is_none());
+        assert!(airport_urls("EG/L").is_none());
         let root = Path::new("amdb");
         assert_eq!(index_path(root, ""), (root.join("index").join("search.json"), format!("{DATASET}/v1/search.json")));
         assert_eq!(index_path(root, "lhr"), (root.join("index").join("search-L.json"), format!("{DATASET}/v1/search/L.json")));
+    }
+
+    #[test]
+    fn the_osm_file_fills_only_the_layers_the_gateway_file_lacks() {
+        let file = |arp: [f64; 2], layers: Value| Some(json!({ "arp": arp, "layers": layers }).to_string());
+        let line = |e: f64| json!({ "type": "FeatureCollection", "features": [{ "geometry": { "type": "Point", "coordinates": [e, 0.0] } }] });
+        let none = json!({ "type": "FeatureCollection", "features": [] });
+        let gateway = file([10.0, 20.0], json!({ "runwayelement": line(100.0), "water": none }));
+        let osm = file([10.001, 20.0], json!({ "runwayelement": line(999.0), "water": line(0.0), "serviceroad": line(0.0) }));
+        let out = merged(&[gateway.clone(), osm.clone()]).unwrap();
+        let lon = |layer: &str| out[layer]["features"][0]["geometry"]["coordinates"][0].as_f64().unwrap();
+        assert!((lon("runwayelement") - 20.0).abs() < 0.01, "the Gateway runway stays");
+        assert!((out["water"]["features"][0]["geometry"]["coordinates"][1].as_f64().unwrap() - 10.001).abs() < 1e-9, "OSM's own ARP");
+        assert!(out.get("serviceroad").is_some());
+        assert_eq!(merged(&[None, osm]).unwrap()["runwayelement"]["features"].as_array().unwrap().len(), 1, "OSM alone");
+        assert!(merged(&[None, None]).is_none());
     }
 
     #[test]
