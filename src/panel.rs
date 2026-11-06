@@ -62,6 +62,9 @@ pub fn stop() {
 }
 
 fn serve(mut stream: TcpStream) -> std::io::Result<()> {
+    // macOS hands accepted sockets the listener's non-blocking mode, and write_all then
+    // stops at a full send buffer (~320 KB): an airport map arrived cut short.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(250)))?;
     stream.set_nodelay(true)?;
     let mut buf = vec![0u8; 4096];
