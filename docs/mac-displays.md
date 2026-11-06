@@ -149,9 +149,18 @@ Left to do:
 - Our Chromium switches (`disable-gpu-compositing`) do not apply on macOS, so
   Chromium composites as X-Plane set it up. With GPU compositing, `OnPaint`
   still delivers a CPU buffer, but measure its cost on the main thread.
-- Key input uses Windows virtual-key codes in `windows_key_code` and leaves
-  `native_key_code` at 0. CEF on macOS may want `native_key_code` (a macOS key
-  code) for some keys. Test MFD and KCCU typing.
+- Keyboard: MFD typing did nothing in the first run. CEF on macOS
+  (`TranslateWebKeyEvent`) ignores `windows_key_code`. It builds an NSEvent
+  from `native_key_code` and the characters, and reads a key with no
+  characters as a modifier change. `send_key` now does on macOS what CEF's
+  cefclient does: KEYDOWN, CHAR, KEYUP, each with the US-layout `kVK_*` code
+  and the NSEvent character (`mac_key`; Backspace 0x7F, arrows 0xF700...).
+  Not yet retested in X-Plane. Non-US layouts send their character with the
+  US key code, so `event.code` may not match the keycap.
+- First run in X-Plane (2026-11-06, `e77a7c7`): 22 browsers open, about
+  36 fps, about 3 ms per frame in the plugin, browser paints 0.03-0.25 ms per
+  frame, paint copies 0.1-0.4 ms each with no failed reads. Copying on the
+  main thread is cheap enough.
 - `Browsers::close()` pumps `cef_do_message_loop_work` itself for up to 5 s
   while the plugin stops. That was proven on Windows only; an aircraft
   unload or reload on macOS may hang or crash there.

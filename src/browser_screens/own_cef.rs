@@ -1112,6 +1112,58 @@ unsafe fn send_input(host: *mut Host, input: &Input) {
     }
 }
 
+/// The macOS key code (US layout, `kVK_*`) and NSEvent character for a keystroke from
+/// X-Plane: its XPLM virtual key and character. `None` for keys this does not know.
+#[cfg(target_os = "macos")]
+fn mac_key(vkey: c_int, ch: u16) -> Option<(c_int, u16)> {
+    // Index = key code; '\0' where the key is not a character key.
+    const US: &[u8] = b"asdfhgzxcv\0bqweryt123465=97-80]ou[ip\0lj'k;\\,/nm.\0 `";
+    const SHIFTED: &[u8] = b"!@#$%^&*()_+{}|:\"<>?~";
+    const UNSHIFTED: &[u8] = b"1234567890-=[]\\;',./`";
+    let special = match vkey {
+        0x08 => Some((0x33, 0x7F)),
+        0x09 => Some((0x30, 0x09)),
+        0x0D => Some((0x24, 0x0D)),
+        0x1B => Some((0x35, 0x1B)),
+        0x2E => Some((0x75, 0xF728)),
+        0x25 => Some((0x7B, 0xF702)),
+        0x26 => Some((0x7E, 0xF700)),
+        0x27 => Some((0x7C, 0xF703)),
+        0x28 => Some((0x7D, 0xF701)),
+        _ => None,
+    };
+    if special.is_some() {
+        return special;
+    }
+    let byte = u8::try_from(ch).ok().filter(|b| (0x20..0x7f).contains(b))?;
+    let base = match SHIFTED.iter().position(|b| *b == byte) {
+        Some(i) => UNSHIFTED[i],
+        None => byte.to_ascii_lowercase(),
+    };
+    let code = US.iter().position(|b| *b == base && base != 0)?;
+    Some((code as c_int, ch))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_key_tests {
+    use super::*;
+
+    #[test]
+    fn keystrokes_get_their_mac_key_codes() {
+        assert_eq!(mac_key(0x41, 'a' as u16), Some((0x00, 'a' as u16)));
+        assert_eq!(mac_key(0x41, 'A' as u16), Some((0x00, 'A' as u16)));
+        assert_eq!(mac_key(0x4E, 'N' as u16), Some((0x2D, 'N' as u16)));
+        assert_eq!(mac_key(0x30, '0' as u16), Some((0x1D, '0' as u16)));
+        assert_eq!(mac_key(0x35, '%' as u16), Some((0x17, '%' as u16)));
+        assert_eq!(mac_key(0xB8, '/' as u16), Some((0x2C, '/' as u16)));
+        assert_eq!(mac_key(0x20, ' ' as u16), Some((0x31, ' ' as u16)));
+        assert_eq!(mac_key(0x08, 0), Some((0x33, 0x7F)));
+        assert_eq!(mac_key(0x0D, 0x0D), Some((0x24, 0x0D)));
+        assert_eq!(mac_key(0x2E, 0), Some((0x75, 0xF728)));
+        assert_eq!(mac_key(0x70, 0), None);
+    }
+}
+
 unsafe fn send_key(host: *mut Host, input: &Input) {
     const RAWKEYDOWN: c_int = 0;
     const KEYUP: c_int = 2;
@@ -1128,6 +1180,18 @@ unsafe fn send_key(host: *mut Host, input: &Input) {
     }
     if flags & 2 != 0 {
         modifiers |= 1 << 3;
+    }
+    // macOS: CEF ignores `windows_key_code` and builds an NSEvent from `native_key_code`
+    // and the characters, where none reads as a modifier change. As its own cefclient
+    // does: KEYDOWN, CHAR, KEYUP, all carrying the Mac key code and character.
+    #[cfg(target_os = "macos")]
+    if let Some((code, ch)) = mac_key(vkey, character) {
+        const KEYDOWN: c_int = 1;
+        let key = |type_: c_int| KeyEvent { type_, modifiers, windows_key_code: vkey, native_key_code: code, is_system_key: 0, character: ch, unmodified_character: ch, focus_on_editable_field: 0 };
+        for type_ in [KEYDOWN, CHAR, KEYUP] {
+            ((*host).send_key_event)(host, &key(type_));
+        }
+        return;
     }
     let key = |type_: c_int, ch: u16| KeyEvent { type_, modifiers, windows_key_code: vkey, native_key_code: 0, is_system_key: 0, character: ch, unmodified_character: ch, focus_on_editable_field: 0 };
     ((*host).send_key_event)(host, &key(RAWKEYDOWN, 0));
