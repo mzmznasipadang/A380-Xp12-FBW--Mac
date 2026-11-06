@@ -727,6 +727,16 @@ fn mfd_view() -> Option<u32> {
     *V.get_or_init(|| panel_views().iter().find(|v| v.screen.eq_ignore_ascii_case("SCREEN_DU_MFD")).map(|v| v.index))
 }
 
+/// Whether a page on `screen` reported a focused text field ([`set_text_focus`]).
+pub(crate) fn page_text_focus(screen: &str) -> bool {
+    static SCREENS: OnceLock<Vec<(u32, String)>> = OnceLock::new();
+    let Ok(view) = u32::try_from(TEXT_FOCUS.load(Ordering::Relaxed)) else { return false };
+    if view == server::EFB_VIEW {
+        return screen == EFB_SCREEN;
+    }
+    SCREENS.get_or_init(|| panel_views().into_iter().map(|v| (v.index, v.screen)).collect()).iter().any(|(i, s)| *i == view && s.eq_ignore_ascii_case(screen))
+}
+
 fn typing_target() -> Option<u32> {
     if crate::display::efb_text_focus() {
         return Some(server::EFB_VIEW);

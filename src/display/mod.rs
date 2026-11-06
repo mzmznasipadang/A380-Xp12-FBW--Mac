@@ -2349,8 +2349,8 @@ pub(crate) fn mfd_text_focus() -> bool {
 fn screen_ignores_keys(screen: isize) -> bool {
     let Some(def) = (screen >= 0).then(|| SCREENS.get(screen as usize)).flatten() else { return false };
     match def.id {
-        EFB_SCREEN => !EFB_TEXT_FOCUS.load(Ordering::Relaxed),
-        "SCREEN_DU_MFD" => !MFD_TEXT_FOCUS.load(Ordering::Relaxed),
+        EFB_SCREEN => !EFB_TEXT_FOCUS.load(Ordering::Relaxed) && !crate::browser_screens::page_text_focus(EFB_SCREEN),
+        "SCREEN_DU_MFD" => !MFD_TEXT_FOCUS.load(Ordering::Relaxed) && !crate::browser_screens::page_text_focus("SCREEN_DU_MFD"),
         _ => false,
     }
 }

@@ -57,8 +57,10 @@
     }
     el.dispatchEvent(new KeyboardEvent("keyup", init));
   }
-  document.addEventListener("focusin", (e) => { if (isText(e.target)) send(["f", 1]); }, true);
-  document.addEventListener("focusout", (e) => { if (isText(e.target)) send(["f", 0]); }, true);
+  // The MFD's fields are focusable spans that read keypress themselves, not text inputs.
+  const takesKeys = (el) => isText(el) || (!!el && !!el.classList && el.classList.contains("mfd-input-field-text-input"));
+  document.addEventListener("focusin", (e) => { if (takesKeys(e.target)) send(["f", 1]); }, true);
+  document.addEventListener("focusout", (e) => { if (takesKeys(e.target)) send(["f", 0]); }, true);
 
   // A page only sees focus when its browser has it, which nothing here gives it.
   const realHasFocus = document.hasFocus.bind(document);
