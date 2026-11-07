@@ -24,6 +24,7 @@ mod aspects;
 pub(crate) mod physics;
 
 use std::ffi::{c_int, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -172,6 +173,9 @@ static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 
 static QUEUED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
+/// Lets this plugin's own park brake command through to X-Plane, until the next tick.
+static XP_PASSTHROUGH: AtomicBool = AtomicBool::new(false);
+
 /// Queue one of FlyByWire's events for the next tick, as if its command was pressed.
 pub fn queue_event(event: &'static str) {
     if let Ok(mut q) = QUEUED.lock() {
@@ -191,6 +195,9 @@ fn now() -> f64 {
 }
 
 unsafe extern "C" fn on_command(_command: CommandRef, phase: c_int, refcon: *mut c_void) -> c_int {
+    if XP_PASSTHROUGH.load(Ordering::Relaxed) {
+        return 1;
+    }
     let i = refcon as usize;
     let Ok(mut guard) = PENDING.lock() else { return 1 };
     let Some(p) = guard.as_mut() else { return 1 };
@@ -270,8 +277,6 @@ struct Refs {
     steer_actual: Option<DataRef>,
     flap_detents: Option<DataRef>,
     tug_connected: Option<DataRef>,
-    bp_brake_override: Option<DataRef>,
-    bp_brake_set: Option<DataRef>,
     yoke_roll: Option<DataRef>,
     on_ground: Option<DataRef>,
 }
@@ -308,8 +313,6 @@ impl Refs {
             steer_actual: f("sim/flightmodel2/gear/tire_steer_actual_deg"),
             flap_detents: f("sim/aircraft/controls/acf_flap_detents"),
             tug_connected: f("bp/connected"),
-            bp_brake_override: f("bp/parking_brake_override"),
-            bp_brake_set: f("bp/parking_brake_set"),
             yoke_roll: f("sim/joystick/yoke_roll_ratio"),
             on_ground: f("sim/flightmodel/failures/onground_any"),
         }
@@ -414,6 +417,8 @@ pub struct Handling {
     last_inputs_at: Option<f64>,
     systems_dt: f64,
     nose_steer_deg: f64,
+    /// Ticks before X-Plane's own park brake is nudged again.
+    park_sync_in: u32,
 }
 
 const ROLL_STEERING_FADE_S: f64 = 2.;
@@ -499,6 +504,7 @@ impl Handling {
             last_inputs_at: None,
             systems_dt: 0.,
             nose_steer_deg: 0.,
+            park_sync_in: 0,
         };
         handling.register(xplm);
         handling
@@ -799,14 +805,25 @@ impl Handling {
             read(&ids.body_gear_brake_press[0]),
             read(&ids.body_gear_brake_press[1]),
         );
+        // X-Plane 12.4 rebuilds both from its own park brake every frame, whatever a plugin
+        // writes, and the masked commands never reach it, so it stayed set from load and
+        // BetterPushback waited forever for a release. Fire X-Plane's own command to match.
+        XP_PASSTHROUGH.store(false, Ordering::Relaxed);
+        if let Some(d) = r.parkbrake {
+            let want = hold >= 0.5;
+            if (xplm.get_f(d) >= 0.5) == want {
+                self.park_sync_in = 0;
+            } else if self.park_sync_in > 0 {
+                self.park_sync_in -= 1;
+            } else {
+                XP_PASSTHROUGH.store(true, Ordering::Relaxed);
+                crate::xp::command_once(if want { "sim/flight_controls/park_brake_set" } else { "sim/flight_controls/park_brake_release" });
+                crate::log(&format!("park brake: X-Plane's own {} to match FlyByWire's", if want { "set" } else { "released" }));
+                self.park_sync_in = 120;
+            }
+        }
         for d in [r.parkbrake, r.parking_brake_ratio].into_iter().flatten() {
             xplm.set_f(d, hold as f32);
-        }
-        // X-Plane 12.4 keeps those two at its own latched park brake whatever a plugin writes,
-        // so BetterPushback waited forever for a release; its remote brake flag takes ours.
-        if let (Some(o), Some(set)) = (r.bp_brake_override, r.bp_brake_set) {
-            xplm.set_i(o, 1);
-            xplm.set_i(set, (hold >= 0.5) as c_int);
         }
         // X-Plane's autobrake off (1), FlyByWire's autobrake braking through
         // the force factors.
@@ -853,7 +870,7 @@ impl Handling {
 
     /// Hand gear, brakes and steering back to X-Plane.
     pub fn release(&mut self, xplm: &Xplm) {
-        for d in self.refs.overrides().into_iter().flatten().chain(self.refs.bp_brake_override) {
+        for d in self.refs.overrides().into_iter().flatten() {
             xplm.set_i(d, 0);
         }
         for (i, r) in self.registered.drain(..).enumerate() {
