@@ -243,14 +243,6 @@ pub struct FcdcDiscreteOutputs {
 // fcdc/Fcdc.h, Fcdc.cpp
 // ---------------------------------------------------------------------------
 
-/// Fcdc.h:7-11
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LateralLaw {
-    NormalLaw,
-    DirectLaw,
-    None,
-}
-
 /// Fcdc.h:13-21
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PitchLaw {
@@ -258,7 +250,8 @@ pub enum PitchLaw {
     AlternateLaw1A,
     AlternateLaw1B,
     AlternateLaw1C,
-    AlternateLaw2,
+    AlternateLaw2A,
+    AlternateLaw2B,
     DirectLaw,
     None,
 }
@@ -447,19 +440,11 @@ impl Fcdc {
         let ssm = SSM_NO;
         let fctl = &self.bus_inputs.prims[self.master_prim_index].fctl;
 
-        let system_lateral_law = if self.all_prims_dead {
-            LateralLaw::DirectLaw
-        } else {
-            Self::get_lateral_law_status_from_bits(
-                bit_from_value(fctl.fctl_law_status_word, 19),
-                bit_from_value(fctl.fctl_law_status_word, 20),
-            )
-        };
-
+        // Since FBW #10940 the PRIMs have one system law, no separate lateral one.
         let system_pitch_law = if self.all_prims_dead {
             PitchLaw::DirectLaw
         } else {
-            Self::get_pitch_law_status_from_bits(
+            Self::get_law_status_from_bits(
                 bit_from_value(fctl.fctl_law_status_word, 16),
                 bit_from_value(fctl.fctl_law_status_word, 17),
                 bit_from_value(fctl.fctl_law_status_word, 18),
@@ -477,11 +462,11 @@ impl Fcdc {
                 || system_pitch_law == PitchLaw::AlternateLaw1B
                 || system_pitch_law == PitchLaw::AlternateLaw1C,
         );
-        set_bit(w, 13, system_pitch_law == PitchLaw::AlternateLaw2);
+        set_bit(w, 13, system_pitch_law == PitchLaw::AlternateLaw2A || system_pitch_law == PitchLaw::AlternateLaw2B);
         set_bit(w, 14, system_pitch_law == PitchLaw::AlternateLaw1A);
         set_bit(w, 15, system_pitch_law == PitchLaw::DirectLaw);
-        set_bit(w, 16, system_lateral_law == LateralLaw::NormalLaw);
-        set_bit(w, 17, system_lateral_law == LateralLaw::DirectLaw);
+        set_bit(w, 16, false);
+        set_bit(w, 17, false);
         for b in [19, 20, 21, 22, 23, 24, 25, 26, 29] {
             set_bit(&mut output.efcs_status_3, b, self.all_prims_dead);
         }
@@ -564,9 +549,13 @@ impl Fcdc {
         // cpp:177-185
         let w = &mut output.fcdc_fg_discrete_word_3;
         set_ssm(w, ssm);
-        for b in 11..=15 {
-            set_bit(w, b, false);
-        }
+        // FE/FG bits carried here until FlyByWire's FCDC rewrite (#10940).
+        let prim = &self.bus_inputs.prims[self.master_prim_index];
+        set_bit(w, 11, bit_or(prim.fe.discrete_word_1, 12, false)); // SPEED SPEED SPEED
+        set_bit(w, 12, bit_or(prim.fe.discrete_word_1, 13, false)); // PITCH PITCH
+        set_bit(w, 13, bit_or(prim.fe.discrete_word_1, 14, false)); // BANK BANK
+        set_bit(w, 14, bit_or(prim.fg.ats_discrete_word, 14, false)); // A/THR Limited
+        set_bit(w, 15, false);
         set_bit(
             w,
             16,
@@ -574,6 +563,8 @@ impl Fcdc {
         );
         set_bit(w, 17, self.btv_triple_click_mtrig.read());
         set_bit(w, 18, false);
+        set_bit(w, 19, bit_or(prim.fg.ats_fma_discrete_word, 26, false)); // CLB REQUEST
+        set_bit(w, 20, bit_or(prim.fg.ats_fma_discrete_word, 27, false)); // MCT REQUEST
 
         // cpp:187-196
         let w = &mut output.landing_fct_discrete_word;
@@ -846,26 +837,16 @@ impl Fcdc {
     }
 
     /// Fcdc.cpp:410-426
-    fn get_pitch_law_status_from_bits(bit1: bool, bit2: bool, bit3: bool) -> PitchLaw {
+    fn get_law_status_from_bits(bit1: bool, bit2: bool, bit3: bool) -> PitchLaw {
         match (bit1, bit2, bit3) {
             (false, false, true) => PitchLaw::NormalLaw,
             (false, true, false) => PitchLaw::AlternateLaw1A,
             (false, true, true) => PitchLaw::AlternateLaw1B,
             (true, false, false) => PitchLaw::AlternateLaw1C,
-            (true, false, true) => PitchLaw::AlternateLaw2,
-            (true, true, false) => PitchLaw::DirectLaw,
+            (true, false, true) => PitchLaw::AlternateLaw2A,
+            (true, true, false) => PitchLaw::AlternateLaw2B,
+            (true, true, true) => PitchLaw::DirectLaw,
             _ => PitchLaw::None,
-        }
-    }
-
-    /// Fcdc.cpp:428-436
-    fn get_lateral_law_status_from_bits(bit1: bool, bit2: bool) -> LateralLaw {
-        if bit1 {
-            LateralLaw::NormalLaw
-        } else if bit2 {
-            LateralLaw::DirectLaw
-        } else {
-            LateralLaw::None
         }
     }
 }
@@ -1241,19 +1222,17 @@ mod tests {
         step(&mut rig, &mut fcdc, &sim, &SimReadings::default(), 40);
 
         let law = rig.prims.prim_buses()[0].fctl.fctl_law_status_word;
-        // PRIM 1 is master (bit 21) and in normal law on the ground: pitch
-        // bits 16-18 = 0 0 1, lateral bit 19 (Fcdc.cpp:410-436).
+        // PRIM 1 is master (bit 21) and in normal law on the ground: system
+        // law bits 16-18 = 0 0 1 (Fcdc.cpp getLawStatusFromBits). Since FBW
+        // #10940 there is no separate lateral law bit.
         assert!(bit_or(law, 21, false));
-        assert_eq!(
-            (bit_from_value(law, 16), bit_from_value(law, 17), bit_from_value(law, 18), bit_from_value(law, 19)),
-            (false, false, true, true)
-        );
+        assert_eq!((bit_from_value(law, 16), bit_from_value(law, 17), bit_from_value(law, 18)), (false, false, true));
         for n in 1..=2 {
             assert_eq!(rig.vars.value(&format!("A32NX_FCDC_{n}_HEALTHY")), 1., "FCDC {n}");
             let w1 = word(&mut rig.vars, &format!("A32NX_FCDC_{n}_DISCRETE_WORD_1"));
             assert_eq!(w1.SSM, SSM_NO);
-            // cpp:89-96: pitch normal (11) and lateral normal (16) only.
-            assert_eq!(w1.Data as u32, 1 << 10 | 1 << 15, "FCDC {n} word 1 {:#x}", w1.Data as u32);
+            // Normal law (bit 11) only; bits 16/17 are always clear since FBW #10940.
+            assert_eq!(w1.Data as u32, 1 << 10, "FCDC {n} word 1 {:#x}", w1.Data as u32);
             for name in [
                 "DISCRETE_WORD_2", "DISCRETE_WORD_3", "DISCRETE_WORD_4", "DISCRETE_WORD_5", "FG_DISCRETE_WORD_1",
                 "FG_DISCRETE_WORD_2", "FG_DISCRETE_WORD_3", "LANDING_FCT_DISCRETE_WORD",
@@ -1369,7 +1348,8 @@ mod tests {
         let out = f.get_bus_outputs();
         // No master PRIM bit anywhere (cpp:37-39) -> direct law (cpp:77-87).
         assert_eq!(out.efcs_status_1.SSM, SSM_NO);
-        assert_eq!(out.efcs_status_1.Data as u32, 1 << 14 | 1 << 16);
+        // Bit 15 (direct law) only: the lateral law bits 16/17 are always clear since FBW #10940.
+        assert_eq!(out.efcs_status_1.Data as u32, 1 << 14);
         // Bits 21-25 are set again from the spoiler status word right after
         // (cpp:126-130), which is not normal operation here.
         for b in [19, 20, 26, 29] {

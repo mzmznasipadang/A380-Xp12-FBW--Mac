@@ -940,9 +940,12 @@ impl Prims {
 
     fn link_baro<V: VariableRegistry + SimulatorReaderWriter>(&mut self, vars: &mut V, ev: &mut EventInputs, fo_sync: bool) {
         let mut link = crate::user_prefs::get().baro_link;
-        // cpp:2423: updateEfisSync runs only with the sync on and both FCUs healthy.
+        // cpp:2427-2429: updateEfisSync runs only with the sync on, both FCUs
+        // healthy and neither EFIS CP in backup (FBW #10940).
+        let backup = ["L", "R"].iter().any(|s| self.names.get(vars, &format!("A32NX_FCU_EFIS_{s}_BACKUP_ACTIVE")) != 0.);
         if link == crate::user_prefs::BaroLink::Independent
             && fo_sync
+            && !backup
             && self.fcus.iter_mut().all(|fcu| fcu.discrete_outputs().fcu_healthy != 0)
         {
             link = crate::user_prefs::BaroLink::LeftRight;

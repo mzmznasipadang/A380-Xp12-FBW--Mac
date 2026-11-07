@@ -86,7 +86,8 @@ impl BaseArinc429 {
 }
 
 /// `base_arinc_429` in A380FadecComputer_types.h.
-#[repr(C)]
+// `} __attribute__((aligned(8)))` in FlyByWire's headers since #10940.
+#[repr(C, align(8))]
 #[derive(Clone, Copy, Debug, Default)]
 #[allow(non_snake_case)]
 pub struct BaseArinc429 {
@@ -152,6 +153,7 @@ pub struct BasePrimFctlOutBus {
     pub radio_height_1_ft: BaseArinc429,
     pub radio_height_2_ft: BaseArinc429,
     pub fctl_law_status_word: BaseArinc429,
+    pub capability_score: BaseArinc429,
     pub discrete_status_word_1: BaseArinc429,
     pub v_alpha_lim_kn: BaseArinc429,
     pub v_alpha_prot_kn: BaseArinc429,
@@ -357,16 +359,17 @@ pub struct AthrOut {
 
 // Layout contract with src/fbw_cpp/shim.cpp (same numbers asserted there).
 const _: () = {
-    assert!(size_of::<BaseArinc429>() == 8 && align_of::<BaseArinc429>() == 4);
-    assert!(size_of::<BasePrimFctlOutBus>() == 456);
+    assert!(size_of::<BaseArinc429>() == 8 && align_of::<BaseArinc429>() == 8);
+    assert!(size_of::<BasePrimFctlOutBus>() == 464);
     assert!(size_of::<BasePrimFeOutBus>() == 96);
     assert!(size_of::<BasePrimFgOutBus>() == 264);
-    assert!(size_of::<BasePrimOutBus>() == 816);
-    assert!(offset_of!(BasePrimOutBus, fe) == 456 && offset_of!(BasePrimOutBus, fg) == 552);
+    assert!(size_of::<BasePrimOutBus>() == 824);
+    assert!(offset_of!(BasePrimOutBus, fe) == 464 && offset_of!(BasePrimOutBus, fg) == 560);
     assert!(offset_of!(BasePrimFgOutBus, ats_discrete_word) == 160);
     assert!(offset_of!(BasePrimFgOutBus, n1_command_percent) == 240);
     assert!(offset_of!(BasePrimFgOutBus, flx_to_temp_deg_c) == 248);
     assert!(offset_of!(BasePrimFctlOutBus, fctl_law_status_word) == 416);
+    assert!(offset_of!(BasePrimFctlOutBus, capability_score) == 424);
     assert!(size_of::<AthrTime>() == 16);
     assert!(size_of::<AthrData>() == 152 && align_of::<AthrData>() == 8);
     assert!(offset_of!(AthrData, on_ground) == 72);
@@ -378,19 +381,19 @@ const _: () = {
     assert!(offset_of!(AthrInput, TLA_deg) == 8);
     assert!(offset_of!(AthrInput, is_anti_ice_active) == 64);
     assert!(offset_of!(AthrInput, tracking_mode_on_override) == 67);
-    assert!(size_of::<AthrIn>() == 2688 && align_of::<AthrIn>() == 8);
+    assert!(size_of::<AthrIn>() == 2712 && align_of::<AthrIn>() == 8);
     assert!(offset_of!(AthrIn, data) == 16 && offset_of!(AthrIn, input) == 168);
-    assert!(offset_of!(AthrIn, prim_1) == 240 && offset_of!(AthrIn, prim_2) == 1056 && offset_of!(AthrIn, prim_3) == 1872);
+    assert!(offset_of!(AthrIn, prim_1) == 240 && offset_of!(AthrIn, prim_2) == 1064 && offset_of!(AthrIn, prim_3) == 1888);
     assert!(size_of::<AthrDataComputed>() == 16);
     assert!(size_of::<BaseEec>() == 104);
     assert!(size_of::<AthrOutput>() == 56);
     assert!(offset_of!(AthrOutput, is_in_reverse) == 24 && offset_of!(AthrOutput, thrust_limit_type) == 28);
     assert!(offset_of!(AthrOutput, thrust_limit_percent) == 32 && offset_of!(AthrOutput, N1_c_percent) == 40);
     assert!(offset_of!(AthrOutput, athr_control_active) == 48 && offset_of!(AthrOutput, memo_thrust_active) == 49);
-    assert!(size_of::<AthrOut>() == 1232 && align_of::<AthrOut>() == 8);
+    assert!(size_of::<AthrOut>() == 1240 && align_of::<AthrOut>() == 8);
     assert!(offset_of!(AthrOut, data_computed) == 168 && offset_of!(AthrOut, input) == 184);
-    assert!(offset_of!(AthrOut, prim_input) == 256 && offset_of!(AthrOut, output) == 1072);
-    assert!(offset_of!(AthrOut, fadec_bus_output) == 1128);
+    assert!(offset_of!(AthrOut, prim_input) == 256 && offset_of!(AthrOut, output) == 1080);
+    assert!(offset_of!(AthrOut, fadec_bus_output) == 1136);
 };
 
 #[repr(C)]

@@ -84,6 +84,8 @@ PRIMITIVES = {
     "boolean_T": (1, 1, "u8", "boolean_T (unsigned char)"),
     "int8_T": (1, 1, "i8", None),
     "uint8_T": (1, 1, "u8", None),
+    "uint16_T": (2, 2, "u16", None),
+    "int16_T": (2, 2, "i16", None),
 }
 
 
@@ -92,9 +94,16 @@ def read(name):
         return f.read().replace("\r", "")
 
 
+# Structs declared `} __attribute__((aligned(N)));` (base_arinc_429 since
+# FlyByWire #10940): name -> N.
+FORCED_ALIGN = {}
+
+
 def parse(text):
     structs = {}
-    for m in re.finditer(r"struct (\w+)\s*\{(.*?)\};", text, re.S):
+    for m in re.finditer(r"struct (\w+)\s*\{(.*?)\}\s*(?:__attribute__\(\(aligned\((\d+)\)\)\))?;", text, re.S):
+        if m.group(3):
+            FORCED_ALIGN[m.group(1)] = int(m.group(3))
         fields = []
         for line in m.group(2).strip().splitlines():
             line = line.strip()
@@ -161,6 +170,7 @@ def main():
             offsets.append((field, offset))
             offset += size
             align = max(align, a)
+        align = max(align, FORCED_ALIGN.get(name, 1))
         size = (offset + align - 1) // align * align
         layout[name] = (size, align, offsets)
         return layout[name]
@@ -202,7 +212,8 @@ def main():
         if name in FROM_CONTROLLERS:
             continue
         rust.append(f"/// `{name}` in {origin[name]}.")
-        rust.append("#[repr(C)]")
+        forced = FORCED_ALIGN.get(name)
+        rust.append(f"#[repr(C, align({forced}))]" if forced else "#[repr(C)]")
         rust.append("#[derive(Clone, Copy, Debug, Default)]")
         rust.append(f"pub struct {camel(name)} {{")
         for ty, field in structs[name]:

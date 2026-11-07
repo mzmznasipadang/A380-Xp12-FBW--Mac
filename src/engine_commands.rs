@@ -174,6 +174,9 @@ struct EngineIds {
     eng_failed: VariableIdentifier,
     net_thrust: VariableIdentifier,
     eng_combustion: VariableIdentifier,
+    // FlyByWireInterface.cpp:3010-3011 (FBW #10940): the EWD/PFD THR LK reads word 6 bit 12.
+    ecu_status_word_3: VariableIdentifier,
+    ecu_maintenance_word_6: VariableIdentifier,
     /// The same, under MSFS's other name for it, which FlyByWire's PFD reads
     /// (`GENERAL ENG COMBUSTION:n`, the sidestick position cross).
     general_eng_combustion: VariableIdentifier,
@@ -468,6 +471,8 @@ impl EngineCommands {
             eng_failed: vars.get(format!("ENG FAILED:{n}")),
             net_thrust: vars.get(format!("ENGINE_NET_THRUST_N:{n}")),
             eng_combustion: vars.get(format!("ENG COMBUSTION:{n}")),
+            ecu_status_word_3: vars.get(format!("A32NX_ECU_{n}_STATUS_WORD_3")),
+            ecu_maintenance_word_6: vars.get(format!("A32NX_ECU_{n}_MAINTENANCE_WORD_6")),
             general_eng_combustion: vars.get(format!("GENERAL ENG COMBUSTION:{n}")),
             n1: vars.get(format!("ENGINE_N1:{n}")),
             n2: vars.get(format!("ENGINE_N2:{n}")),
@@ -731,6 +736,8 @@ impl EngineCommands {
             eec[i] = out.fadec_bus_output; // cpp:3001
             let o = out.output;
             let e = &self.engines[i];
+            vars.write(&e.ecu_status_word_3, crate::prim::to_simvar(out.fadec_bus_output.ecu_status_word_3));
+            vars.write(&e.ecu_maintenance_word_6, crate::prim::to_simvar(out.fadec_bus_output.ecu_maintenance_word_6));
             let (tla_n1, reverse, n1_commanded) = (e.tla_n1, e.reverse, e.n1_commanded);
             vars.write(&tla_n1, o.N1_TLA_percent);
             // 78_000+i "thrust reverser lock fault": fails to lock stowed,
