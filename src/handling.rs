@@ -270,6 +270,8 @@ struct Refs {
     steer_actual: Option<DataRef>,
     flap_detents: Option<DataRef>,
     tug_connected: Option<DataRef>,
+    bp_brake_override: Option<DataRef>,
+    bp_brake_set: Option<DataRef>,
     yoke_roll: Option<DataRef>,
     on_ground: Option<DataRef>,
 }
@@ -306,6 +308,8 @@ impl Refs {
             steer_actual: f("sim/flightmodel2/gear/tire_steer_actual_deg"),
             flap_detents: f("sim/aircraft/controls/acf_flap_detents"),
             tug_connected: f("bp/connected"),
+            bp_brake_override: f("bp/parking_brake_override"),
+            bp_brake_set: f("bp/parking_brake_set"),
             yoke_roll: f("sim/joystick/yoke_roll_ratio"),
             on_ground: f("sim/flightmodel/failures/onground_any"),
         }
@@ -798,6 +802,12 @@ impl Handling {
         for d in [r.parkbrake, r.parking_brake_ratio].into_iter().flatten() {
             xplm.set_f(d, hold as f32);
         }
+        // X-Plane 12.4 keeps those two at its own latched park brake whatever a plugin writes,
+        // so BetterPushback waited forever for a release; its remote brake flag takes ours.
+        if let (Some(o), Some(set)) = (r.bp_brake_override, r.bp_brake_set) {
+            xplm.set_i(o, 1);
+            xplm.set_i(set, (hold >= 0.5) as c_int);
+        }
         // X-Plane's autobrake off (1), FlyByWire's autobrake braking through
         // the force factors.
         if let Some(d) = r.auto_brake_level {
@@ -843,7 +853,7 @@ impl Handling {
 
     /// Hand gear, brakes and steering back to X-Plane.
     pub fn release(&mut self, xplm: &Xplm) {
-        for d in self.refs.overrides().into_iter().flatten() {
+        for d in self.refs.overrides().into_iter().flatten().chain(self.refs.bp_brake_override) {
             xplm.set_i(d, 0);
         }
         for (i, r) in self.registered.drain(..).enumerate() {
