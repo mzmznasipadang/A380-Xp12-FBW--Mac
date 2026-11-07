@@ -8,7 +8,8 @@ set -u
 RUST_VERSION=1.97.1
 NODE_VERSION=22.23.1
 AIRCRAFT_NAME="A380 for X-Plane 12"
-SOURCE_REPO="https://github.com/Vihaan2012-cmyk/A380-For-X-Plane-12-Based-on-The-FBW-A380.git"
+# A380_SOURCE_REPO=<git URL> builds from another fork.
+SOURCE_REPO="${A380_SOURCE_REPO:-https://github.com/mzmznasipadang/A380-Xp12-FBW--Mac.git}"
 
 say() { printf '%s\n' "$*"; }
 line() { say "------------------------------------------------------------"; }
@@ -182,6 +183,8 @@ describe_branch() {
 
 say "3. The source comes from the project's public GitHub repo."
 if [ -d "$SRC/.git" ]; then
+  # The checkout below is forced: never over someone's uncommitted work.
+  [ -z "$(git -C "$SRC" status --porcelain 2>/dev/null)" ] || stop "$SRC has uncommitted changes. Commit or move them, or pick another work folder."
   git -C "$SRC" remote set-url origin "$SOURCE_REPO" >> "$LOG" 2>&1
   say "   Pulling the latest source..."
   git -C "$SRC" fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' >> "$LOG" 2>&1 || stop "could not pull from $SOURCE_REPO. Check your connection. See $LOG"
@@ -192,11 +195,8 @@ else
 fi
 branches="$(git -C "$SRC" for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin | grep -v '^HEAD$')"
 [ -n "$branches" ] || stop "the repo has no branches."
-case "$OS" in
-  mac) wanted=mac-test ;;
-  linux) wanted=linux-test ;;
-  *) wanted=dev ;;
-esac
+# mac-fixes carries the releases (v1.0.6 on) for every platform.
+wanted=mac-fixes
 say ""
 say "   Branches:"
 n=0
