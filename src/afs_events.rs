@@ -73,6 +73,9 @@ pub enum Event {
     FcuEfisBaroPush(usize),
     FcuEfisBaroPull(usize),
     FcuEfisButton(usize, EfisButton),
+    /// `A32NX.FCU_EFIS_{L,R}_NAVAID_{1,2}_SET` (FBW #10914): side, which
+    /// NAVAID (0 or 1), and the absolute mode, 0 NONE / 1 ADF / 2 VOR.
+    FcuEfisNavaidSet(usize, usize, f64),
 
     AutoThrottleArm,
     AutoThrottleDisconnect,
@@ -437,6 +440,15 @@ impl EventInputs {
             Event::FcuEfisBaroTurn(side, turns) => self.efis[side].baro_knob.turns = turns,
             Event::FcuEfisBaroPush(side) => self.efis[side].baro_knob.pushed = 1,
             Event::FcuEfisBaroPull(side) => self.efis[side].baro_knob.pulled = 1,
+            // SimConnectInterface.cpp processEvent: `..._set = data0`.
+            Event::FcuEfisNavaidSet(side, which, mode) => {
+                *match (side, which) {
+                    (0, 0) => &mut ap.efis_navaid_mode_1_left_set,
+                    (0, _) => &mut ap.efis_navaid_mode_2_left_set,
+                    (_, 0) => &mut ap.efis_navaid_mode_1_right_set,
+                    _ => &mut ap.efis_navaid_mode_2_right_set,
+                } = mode;
+            }
             Event::FcuEfisButton(side, button) => {
                 let e = &mut self.efis[side];
                 *match button {

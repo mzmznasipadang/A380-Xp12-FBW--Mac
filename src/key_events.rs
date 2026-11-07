@@ -208,6 +208,10 @@ fn afs_event(name: &str, value: f64) -> Option<Event> {
         "A32NX.FCU_EFIS_R_MODE_DEC" => Event::FcuEfisModeTurn(1, -1),
         "A32NX.FCU_EFIS_R_RANGE_INC" => Event::FcuEfisRangeTurn(1, 1),
         "A32NX.FCU_EFIS_R_RANGE_DEC" => Event::FcuEfisRangeTurn(1, -1),
+        "A32NX.FCU_EFIS_L_NAVAID_1_SET" => Event::FcuEfisNavaidSet(0, 0, value),
+        "A32NX.FCU_EFIS_L_NAVAID_2_SET" => Event::FcuEfisNavaidSet(0, 1, value),
+        "A32NX.FCU_EFIS_R_NAVAID_1_SET" => Event::FcuEfisNavaidSet(1, 0, value),
+        "A32NX.FCU_EFIS_R_NAVAID_2_SET" => Event::FcuEfisNavaidSet(1, 1, value),
         "A32NX.FCU_EFIS_L_BARO_INC" => Event::FcuEfisBaroTurn(0, 1),
         "A32NX.FCU_EFIS_L_BARO_DEC" => Event::FcuEfisBaroTurn(0, -1),
         "A32NX.FCU_EFIS_L_BARO_PUSH" => Event::FcuEfisBaroPush(0),
@@ -436,6 +440,11 @@ mod tests {
         assert!(apply(&mut vars, &mut xp, "A32NX.FCU_ALT_SET", &[36000.]));
         let inputs = afs_events::take();
         assert_eq!(inputs.autopilot.alt_set, 36000.);
+        assert!(apply(&mut vars, &mut xp, "A32NX.FCU_EFIS_R_NAVAID_2_SET", &[1.]));
+        let inputs = afs_events::take();
+        assert_eq!(inputs.autopilot.efis_navaid_mode_2_right_set, 1.);
+        assert_eq!(inputs.autopilot.efis_navaid_mode_1_right_set, -1., "the other NAVAID is untouched");
+        assert_eq!(inputs.autopilot.efis_navaid_mode_2_left_set, -1., "and so is the other side");
     }
 
     /// MfdFmsFplnDirectTo.tsx's DIR TO INSERT button and FmcAircraftInterface.ts's
