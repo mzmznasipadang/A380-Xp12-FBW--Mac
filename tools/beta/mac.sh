@@ -477,6 +477,9 @@ ASSETS="$SRC/fbw/xplane/fbw-a380x/src/base/flybywire-aircraft-a380-842/html_ui"
 mkdir -p "$STAGE/html_ui/Fonts" "$STAGE/html_ui/Images"
 run "the fonts could not be staged" cp -R "$ASSETS/Fonts/." "$STAGE/html_ui/Fonts/"
 run "the images could not be staged" cp -R "$ASSETS/Images/." "$STAGE/html_ui/Images/"
+# FlyByWire's build copies src/images into Images/fbw-a380x (the OANS map's SVG icons).
+mkdir -p "$STAGE/html_ui/Images/fbw-a380x"
+run "the images could not be staged" cp -R "$SRC/fbw/xplane/fbw-a380x/src/images/." "$STAGE/html_ui/Images/fbw-a380x/"
 run "our pages could not be staged" cp -R "$SRC/html_ui/." "$STAGE/html_ui/"
 run "the screens could not be installed" cp -R "$STAGE/html_ui/." "$AIRCRAFT/html_ui/"
 for json in "$INSTRUMENTS"/*.json; do

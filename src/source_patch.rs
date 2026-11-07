@@ -47,36 +47,6 @@ pub fn mfd_dialog_height_patch() -> SourcePatch {
     }
 }
 
-/// A handler's error stays with that handler. Without this an
-/// error in a page listening to a flight plan event reached `FlightPlanManager.reset`, which
-/// never recreated its plans: a cold and dark start with F-PLN open left the FMS without any,
-/// and every MFD page after it black.
-pub fn listener_error_patches() -> Vec<SourcePatch> {
-    const BUNDLES: [&str; 12] = [
-        "Clock/clock.js",
-        "EWD/ewd.js",
-        "ExtrasHost/index.js",
-        "FCU/fcu.js",
-        "HUD/hud.js",
-        "MFD/mfd.js",
-        "ND/nd.js",
-        "OIT/oit.js",
-        "PFD/pfd.js",
-        "RMP/rmp.js",
-        "SDv2/sdv2.js",
-        "SystemsHost/SystemsHost.js",
-    ];
-    BUNDLES
-        .iter()
-        .map(|bundle| SourcePatch {
-            path: format!("/Pages/VCockpit/Instruments/A380X/{bundle}"),
-            find: "        this._missed = true;\n        return;\n      }\n      this._deliver(value);\n    }\n    replay() {".to_string(),
-            replace: "        this._missed = true;\n        return;\n      }\n      try {\n        this._deliver(value);\n      } catch (e) {\n        console.error(e);\n      }\n    }\n    replay() {".to_string(),
-            reason: "a bus handler's error stays with that handler".to_string(),
-        })
-        .collect()
-}
-
 pub fn apply(patches: &[SourcePatch], clean: &str, mut text: String, mut log: impl FnMut(bool, &str)) -> String {
     for patch in patches.iter().filter(|p| p.path.eq_ignore_ascii_case(clean)) {
         let (spans, _) = locate(&text, &patch.find);

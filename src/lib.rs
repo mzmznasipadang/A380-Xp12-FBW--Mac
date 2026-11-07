@@ -323,7 +323,6 @@ pub fn static_source_patches() -> Vec<source_patch::SourcePatch> {
     patches.extend(source_patch::amdb_fetch_patches());
     patches.extend(source_patch::flight_plan_backup_patches());
     patches.extend(source_patch::rmp_start_frequency_patches());
-    patches.extend(source_patch::listener_error_patches());
     patches.push(source_patch::mfd_dialog_height_patch());
     patches.push(source_patch::rmp_start_brightness_patch());
     patches.extend(source_patch::oans_clear_patches());
