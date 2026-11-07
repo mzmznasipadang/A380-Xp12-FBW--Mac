@@ -15,6 +15,7 @@ import { FcdcBusPublisher } from '@shared/publishers/FcdcPublisher';
 import { FGDataPublisher } from '../MsfsAvionicsCommon/providers/FGDataPublisher';
 import { CpiomDataPublisher } from '@providers/CpiomPublisher';
 import { PanelInstrument, defineInstrument } from 'xplane-js/data';
+import { EcuBusPublisher } from '@shared/publishers/EcuPublisher';
 
 class A380X_EWD extends PanelInstrument {
   private readonly bus = new ArincEventBus();
@@ -34,6 +35,8 @@ class A380X_EWD extends PanelInstrument {
 
   private readonly fgPublisher = new FGDataPublisher(this.bus);
 
+  private readonly ecuPublisher = new EcuBusPublisher(this.bus);
+
   private readonly clock = new SimClock(this.bus);
 
   constructor() {
@@ -46,6 +49,7 @@ class A380X_EWD extends PanelInstrument {
     this.backplane.attachFeeder('ADR', this.adrPublisher);
     this.backplane.attachFeeder('IR', this.irPublisher);
     this.backplane.attachFeeder('FG', this.fgPublisher);
+    this.backplane.attachFeeder('ECU', this.ecuPublisher);
   }
 
   get templateId(): string {

@@ -644,6 +644,13 @@ class RudderTrimIndicator extends View<{ bus: ArincEventBus }> {
 
   private delayStartTime: number = 0;
 
+  constructor(props: { bus: ArincEventBus }) {
+    super(props);
+
+    // FIXME: This is a hack to prevent the confirm node to activate instantly due to A32NX_FWC_SKIP_STARTUP, while an engine failure is indicated during startup.
+    this.engineFailedConfirmNode.write(false, 0.1);
+  }
+
   afterRender(node: ViewNode): void {
     super.afterRender(node);
 

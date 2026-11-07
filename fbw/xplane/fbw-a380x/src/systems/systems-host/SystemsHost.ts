@@ -70,6 +70,7 @@ import { AtcDatalink } from './CpiomD/AtcDatalink';
 import { Acr } from './CpiomD/Acr';
 import { SimVarHandling } from '@datalink/common';
 import { PanelInstrument, Vars, defineInstrument, openChannel } from 'xplane-js/data';
+import { EcuBusPublisher } from '@shared/publishers/EcuPublisher';
 
 class SystemsHost extends PanelInstrument {
   private readonly bus = new ArincEventBus();
@@ -156,6 +157,7 @@ class SystemsHost extends PanelInstrument {
   private readonly lgciuBusPublisher = new LgciuBusPublisher(this.bus);
   private readonly aesuBusPublisher = new AesuBusPublisher(this.bus);
   private readonly switchingPanelPublisher = new SwitchingPanelPublisher(this.bus);
+  private readonly ecuPublisher = new EcuBusPublisher(this.bus);
 
   private readonly efisTawsBridge = new EfisTawsBridge(this.bus, this, this.failuresConsumer);
 
@@ -237,6 +239,7 @@ class SystemsHost extends PanelInstrument {
     this.backplane.attachFeeder('AesuPublisher', this.aesuBusPublisher);
     this.backplane.attachFeeder('SwitchingPanelPublisher', this.switchingPanelPublisher);
     this.backplane.attachFeeder('fmsMessage', this.fmsMessagePublisher);
+    this.backplane.attachFeeder('ecuBus', this.ecuPublisher);
 
     this.hEventPublisher = new PanelEventPublisher(this.bus);
     this.soundManager = new LegacySoundManager();

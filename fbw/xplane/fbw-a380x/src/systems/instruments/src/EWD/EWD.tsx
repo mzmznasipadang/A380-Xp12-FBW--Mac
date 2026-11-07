@@ -13,7 +13,7 @@ import {
   ViewNode,
 } from 'xplane-js/ui';
 import { EwdSimvars } from './shared/EwdSimvarPublisher';
-import { ArincEventBus } from '@flybywiresim/fbw-sdk';
+import { Arinc429LocalVarConsumerSubject, ArincEventBus } from '@flybywiresim/fbw-sdk';
 import { N1Limit } from './elements/ThrustRatingMode';
 import { EngineGauge } from './elements/EngineGauge';
 import { Idle } from './elements/Idle';
@@ -27,11 +27,12 @@ import { WdAbnormalNonSensedProcedures } from './elements/WdAbnormalNonSensed';
 import { DestroyableComponent } from '@flybywiresim/msfs-avionics-common';
 import { WdCpiomFailedFallbackChecklistComponent } from './elements/WdCpiomFailedFallbackChecklistComponent';
 import { FGVars } from '../MsfsAvionicsCommon/providers/FGDataPublisher';
-import { AutoThrustMode, AutoThrustModeMessage } from '@shared/autopilot';
+import { AutoThrustMode } from '@shared/autopilot';
+import { EcuBusEvents } from '@shared/publishers/EcuPublisher';
 import { CpiomData } from '../MsfsAvionicsCommon/providers/CpiomPublisher';
 
 export class EngineWarningDisplay extends DestroyableComponent<{ bus: ArincEventBus }> {
-  private readonly sub = this.props.bus.inbox<EwdSimvars & FwsEvents & FGVars & CpiomData>();
+  private readonly sub = this.props.bus.inbox<EwdSimvars & FwsEvents & FGVars & CpiomData & EcuBusEvents>();
 
   private readonly fwsAvailChecker = new FwsEwdAvailabilityChecker(this.props.bus);
   private readonly cpiomAvailChecker = new CpiomEwdAvailabilityChecker(this.props.bus, this.fwsAvailChecker);
@@ -162,12 +163,15 @@ export class EngineWarningDisplay extends DestroyableComponent<{ bus: ArincEvent
     (v) => v !== AutoThrustMode.A_FLOOR && v !== AutoThrustMode.TOGA_LK,
   );
 
-  private readonly autoThrustModeMessage = BusSignal.from(
-    this.sub.topic('fg.athr.message'),
-    AutoThrustModeMessage.None,
+  // THR LK from the ECUs' maintenance word 6 bit 12 (FBW #10940).
+  private readonly ecuMaintenanceWord6 = [1, 2, 3, 4].map((n) =>
+    Arinc429LocalVarConsumerSubject.create(this.sub.topic(`ecu_maintenance_word_6_${n}` as `ecu_maintenance_word_6_1`)),
   );
 
-  private readonly thrustLockActive = this.autoThrustModeMessage.derive((v) => v === AutoThrustModeMessage.ThrustLock);
+  private readonly thrustLockActive = Derived.from(
+    (words) => words.some((w) => w.bitValueOr(12, false)),
+    ...this.ecuMaintenanceWord6,
+  );
 
   private readonly thrustLockHiddenElement = this.thrustLockActive.derive((v) => !v);
 
@@ -216,7 +220,6 @@ export class EngineWarningDisplay extends DestroyableComponent<{ bus: ArincEvent
       this.thrustLockHiddenElement,
       this.n1LimitHidden,
       this.autoThrustMode,
-      this.autoThrustModeMessage,
     );
   }
 

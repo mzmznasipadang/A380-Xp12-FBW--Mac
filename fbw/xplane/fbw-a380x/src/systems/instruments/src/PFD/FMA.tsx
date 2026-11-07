@@ -40,6 +40,7 @@ import {
 import { FcdcBusBaseEvents } from '@shared/publishers/FcdcPublisher';
 import { FcuEfisCpBusEvents } from '../../../shared/src/publishers/EfisCpBusPublisher';
 import { getDisplayIndex } from './PFD';
+import { EcuBusEvents } from '@shared/publishers/EcuPublisher';
 
 abstract class ShowForSecondsComponent<T extends ViewProps> extends View<T> {
   private timeout: number = 0;
@@ -74,7 +75,7 @@ export class FMA extends View<{
   readonly isAttExcessive: Readable<boolean>;
 }> {
   private sub = this.props.bus.inbox<
-    PFDSimvars & Arinc429Values & DmcLogicEvents & PrimFgBusBaseEvents & FcdcBusBaseEvents
+    PFDSimvars & Arinc429Values & DmcLogicEvents & PrimFgBusBaseEvents & FcdcBusBaseEvents & EcuBusEvents
   >();
 
   private primFgDiscreteWord1 = Arinc429LocalVarConsumerSubject.create(this.sub.topic('prim_fg_discrete_word_1'));
@@ -94,6 +95,11 @@ export class FMA extends View<{
   );
 
   private readonly fcdcDiscreteWord1 = Arinc429LocalVarConsumerSubject.create(this.sub.topic('fcdc_discrete_word_1'));
+
+  private ecu1MaintenanceWord6 = Arinc429LocalVarConsumerSubject.create(this.sub.topic('ecu_maintenance_word_6_1'));
+  private ecu2MaintenanceWord6 = Arinc429LocalVarConsumerSubject.create(this.sub.topic('ecu_maintenance_word_6_2'));
+  private ecu3MaintenanceWord6 = Arinc429LocalVarConsumerSubject.create(this.sub.topic('ecu_maintenance_word_6_3'));
+  private ecu4MaintenanceWord6 = Arinc429LocalVarConsumerSubject.create(this.sub.topic('ecu_maintenance_word_6_4'));
 
   private readonly ap1Engaged = this.primFgDiscreteWord1.derive((word) => word.bitValueOr(11, false));
 
@@ -155,6 +161,18 @@ export class FMA extends View<{
     this.B1Message,
   );
 
+  private readonly thrustLocked = Derived.from(
+    ([ecu1MaintenanceWord6, ecu2MaintenanceWord6, ecu3MaintenanceWord6, ecu4MaintenanceWord6]) =>
+      ecu1MaintenanceWord6.bitValueOr(12, false) ||
+      ecu2MaintenanceWord6.bitValueOr(12, false) ||
+      ecu3MaintenanceWord6.bitValueOr(12, false) ||
+      ecu4MaintenanceWord6.bitValueOr(12, false),
+    this.ecu1MaintenanceWord6,
+    this.ecu2MaintenanceWord6,
+    this.ecu3MaintenanceWord6,
+    this.ecu4MaintenanceWord6,
+  );
+
   private readonly BC3Message = Derived.from(
     ([
       isAttExcessive,
@@ -166,6 +184,7 @@ export class FMA extends View<{
       tdReached,
       disconnectApForLdg,
       btvExitMissed,
+      thrustLocked,
     ]) => {
       return computeBC3Message(
         isAttExcessive,
@@ -177,6 +196,7 @@ export class FMA extends View<{
         btvExitMissed,
         primFgDiscreteWord2,
         primFgDiscreteWord6,
+        thrustLocked,
       );
     },
     this.props.isAttExcessive,
@@ -188,6 +208,7 @@ export class FMA extends View<{
     this.tdReached,
     this.disconnectApForLdg,
     this.btvExitMissed,
+    this.thrustLocked,
   );
 
   private readonly A1A2Message = Derived.from(
@@ -202,12 +223,13 @@ export class FMA extends View<{
   );
 
   private readonly A3Message = Derived.from(
-    ([primFgAtsFmaDiscreteWord, autoBrakeActive, autoBrakeMode]) => {
-      return computeA3Message(primFgAtsFmaDiscreteWord, false, autoBrakeActive, autoBrakeMode);
+    ([primFgAtsFmaDiscreteWord, autoBrakeActive, autoBrakeMode, thrustLocked]) => {
+      return computeA3Message(primFgAtsFmaDiscreteWord, thrustLocked, autoBrakeActive, autoBrakeMode);
     },
     this.primFgAtsFmaDiscreteWord,
     this.autoBrakeActive,
     this.autoBrakeMode,
+    this.thrustLocked,
   );
 
   private readonly sharedModeActive = Derived.from(

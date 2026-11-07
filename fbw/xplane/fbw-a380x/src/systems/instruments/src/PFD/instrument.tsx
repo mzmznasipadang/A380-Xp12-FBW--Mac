@@ -22,6 +22,7 @@ import { PrimFeBusPublisher } from '@shared/publishers/PrimFePublisher';
 import { PrimFctlBusPublisher } from '@shared/publishers/PrimFctlPublisher';
 import { PrimFgBusPublisher } from '@shared/publishers/PrimFgPublisher';
 import { FdSelectionProvider } from './shared/FdSelectionProvider';
+import { EcuBusPublisher } from '@shared/publishers/EcuPublisher';
 
 import './style.scss';
 import { PanelInstrument, defineInstrument } from 'xplane-js/data';
@@ -79,6 +80,8 @@ class A380X_PFD extends PanelInstrument {
 
   private readonly efisCpBusPublisher = new FcuEfisCpBusPublisher(this.bus);
 
+  private readonly ecuBusPublisher = new EcuBusPublisher(this.bus);
+
   constructor() {
     super();
 
@@ -110,6 +113,8 @@ class A380X_PFD extends PanelInstrument {
     this.backplane.attachFeeder('PrimFgPublisher', this.primFgPublisher);
 
     this.backplane.attachFeeder('EfisCpPublisher', this.efisCpBusPublisher);
+
+    this.backplane.attachFeeder('EcuPublisher', this.ecuBusPublisher);
   }
 
   get templateId(): string {
