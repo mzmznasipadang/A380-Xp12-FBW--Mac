@@ -1,0 +1,131 @@
+# Builds the parts of the aircraft that change between releases -- the plugin
+# (win.xpl, mac.xpl) and FlyByWire's cockpit screens -- and, on a v* tag,
+# attaches them as one update zip to that tag's release on this repo. The zip
+# goes over an aircraft already installed with the original installer: the
+# models, textures and the .acf (built from the user's A330) are not in it.
+#
+# The staging in `screens` mirrors tools/beta/mac.sh's "Installing into
+# X-Plane" step; keep the two in step.
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  RUST_VERSION: "1.97.1"  # as tools/beta/mac.sh
+  NODE_VERSION: "22.23.1"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+      - name: Build win.xpl
+        shell: bash
+        run: |
+          export PATH="$(cygpath -u '${{ steps.msys2.outputs.msys2-location }}')/mingw64/bin:$PATH"
+          rustup toolchain install "$RUST_VERSION-x86_64-pc-windows-gnu" --profile minimal
+          cargo "+$RUST_VERSION-x86_64-pc-windows-gnu" build --release --features js --lib
+          mkdir -p out && cp target/release/fbw_a380_systems.dll out/win.xpl
+      - uses: actions/upload-artifact@v4
+        with: { name: win-xpl, path: out/win.xpl }
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build mac.xpl (Apple Silicon and Intel)
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
+          mkdir -p out
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo "+$RUST_VERSION" build --release --features js --lib --target "$t"
+            cp "target/$t/release/libfbw_a380_systems.dylib" "out/$t.dylib"
+            codesign --remove-signature "out/$t.dylib"
+            python3 -I tools/beta/align_strtab.py "out/$t.dylib"
+          done
+          lipo -create out/aarch64-apple-darwin.dylib out/x86_64-apple-darwin.dylib -output out/mac.xpl
+          codesign --force --sign - out/mac.xpl
+          nm -gU out/mac.xpl | grep -q _XPluginStart
+      - uses: actions/upload-artifact@v4
+        with: { name: mac-xpl, path: out/mac.xpl }
+
+  screens:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}" }
+      - name: Build and stage the screens
+        run: |
+          set -e
+          SRC="$PWD" INSTRUMENTS="$RUNNER_TEMP/instruments" STAGE="$RUNNER_TEMP/stage"
+          (cd fbw/xplane/xplane && npm ci --no-audit --no-fund)
+          (cd fbw/xplane && node xplane/build.mjs --out "$INSTRUMENTS" --library "$SRC/xp-ui")
+          test -f "$INSTRUMENTS/html_ui/Pages/VCockpit/Instruments/A380X/PFD/pfd.html"
+          A380X="$STAGE/html_ui/Pages/VCockpit/Instruments/A380X"
+          ASSETS="$SRC/fbw/xplane/fbw-a380x/src/base/flybywire-aircraft-a380-842/html_ui"
+          XPHFBW="$STAGE/plugins/fbw_a380_systems/XPHFBW"
+          mkdir -p "$STAGE" "$XPHFBW/ui" "$XPHFBW/js"
+          cp -R "$INSTRUMENTS/html_ui" "$STAGE/html_ui"
+          rm -rf "$A380X/EFB" "$A380X/OITlegacy" "$A380X/popup"
+          mkdir -p "$STAGE/html_ui/Fonts" "$STAGE/html_ui/Images/fbw-a380x"
+          cp -R "$ASSETS/Fonts/." "$STAGE/html_ui/Fonts/"
+          cp -R "$ASSETS/Images/." "$STAGE/html_ui/Images/"
+          cp -R "$SRC/fbw/xplane/fbw-a380x/src/images/." "$STAGE/html_ui/Images/fbw-a380x/"
+          cp -R "$SRC/html_ui/." "$STAGE/html_ui/"
+          for json in "$INSTRUMENTS"/*.json; do [ -f "$json" ] && cp "$json" "$STAGE/"; done
+          cp -R "$SRC/app/ui/." "$XPHFBW/ui/"
+          cp -R "$SRC/app/js/." "$XPHFBW/js/"
+          cp "$INSTRUMENTS/runtime/xplane-js-data.js" "$XPHFBW/js/xplane-js-data.js"
+          cp "$SRC/distribution/THIRD_PARTY_NOTICES.txt" "$STAGE/"
+      - uses: actions/upload-artifact@v4
+        with: { name: screens, path: "${{ runner.temp }}/stage" }
+
+  release:
+    needs: [windows, mac, screens]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Make the update zip
+        run: |
+          set -e
+          NAME="A380-${GITHUB_REF_NAME#v}-update"
+          [ "$GITHUB_REF_TYPE" = tag ] || NAME="A380-${GITHUB_SHA::7}-update"
+          AC="$NAME/A380 for X-Plane 12"
+          mkdir -p "$AC/plugins/fbw_a380_systems/64"
+          cp -R artifacts/screens/. "$AC/"
+          cp artifacts/win-xpl/win.xpl artifacts/mac-xpl/mac.xpl "$AC/plugins/fbw_a380_systems/64/"
+          cat > "$NAME/README.txt" <<EOF
+          A380 for X-Plane 12, update ${GITHUB_REF_NAME} (commit ${GITHUB_SHA::7})
+
+          Install the aircraft with the original installer first. Close X-Plane, then
+          copy the "A380 for X-Plane 12" folder from this zip over
+          X-Plane 12/Aircraft/A380 for X-Plane 12 and let it replace the files.
+          It holds the plugin (win.xpl, mac.xpl) and the cockpit screens.
+
+          On a Mac, remove the download quarantine once:
+            xattr -dr com.apple.quarantine "X-Plane 12/Aircraft/A380 for X-Plane 12"
+          EOF
+          zip -qr "$NAME.zip" "$NAME"
+          echo "ZIP=$NAME.zip" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with: { name: update-zip, path: "${{ env.ZIP }}" }
+      - name: Attach to the tag's release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "Update zip for an installed aircraft: see README.txt inside."
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" --repo "$GITHUB_REPOSITORY" --clobber
